@@ -1,0 +1,551 @@
+-- Load Rayfield
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "Ultra Power Tycoon",
+   LoadingTitle = "UPT Script",
+   LoadingSubtitle = "Full Feature Edition",
+   Theme = "Midnight",
+   DisableRayfieldPrompts = false,
+   DisableBuildWarnings = false,
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = "UPTScript",
+      FileName = "Config",
+   },
+})
+
+-- ── Services ──────────────────────────────────────────────────────────────────
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser      = game:GetService("VirtualUser")
+
+local player    = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local rootPart  = character:WaitForChild("HumanoidRootPart")
+
+local currentSpeed   = 16
+local farmDelay      = 0.3
+local hitboxSize     = 5
+local autoFarm       = false
+local autoBuy        = false
+local infiniteJump   = false
+local hitboxActive   = false
+local godMode        = false
+local antiAFK        = false
+local espActive      = false
+local noCooldown     = false
+
+local farmThread     = nil
+local autoBuyThread  = nil
+local jumpConn       = nil
+local hitboxConn     = nil
+local godConn        = nil
+local afkConn        = nil
+local noCooldownConn = nil
+local espHighlights  = {}
+local hookedMeta     = false
+
+-- Re-apply on respawn
+player.CharacterAdded:Connect(function(c)
+   character = c
+   humanoid  = c:WaitForChild("Humanoid")
+   rootPart  = c:WaitForChild("HumanoidRootPart")
+   task.wait(0.5)
+   humanoid.WalkSpeed = currentSpeed
+   if Rayfield.Flags.InfiniteJump then
+      humanoid.JumpPower = 150
+   end
+end)
+
+-- ── Teleport Locations (YOUR tycoon only) ─────────────────────────────────────
+local locations = {
+   { name = "Location 1",  x = 281.52,  y = 5.85,  z = -69.52  },
+   { name = "Location 2",  x = -80.85,  y = 5.91,  z = -226.45 },
+   { name = "Location 3",  x = 281.71,  y = 4.90,  z = 86.60   },
+   { name = "Location 4",  x = 280.97,  y = 4.85,  z = 246.38  },
+   { name = "Location 5",  x = 35.00,   y = 4.96,  z = -388.68 },
+   { name = "Location 6",  x = 146.10,  y = 4.96,  z = -388.72 },
+   { name = "Location 7",  x = 280.94,  y = 4.85,  z = -238.45 },
+   { name = "Location 8",  x = 164.56,  y = 4.99,  z = 412.59  },
+   { name = "Location 9",  x = 49.42,   y = 4.99,  z = 412.95  },
+   { name = "Location 10", x = -80.18,  y = 4.90,  z = 263.39  },
+}
+
+local function teleport(x, y, z)
+   if character and rootPart then
+      rootPart.CFrame = CFrame.new(x, y, z)
+   end
+end
+
+-- ── Direct Cash Collection (no teleport needed) ───────────────────────────────
+local function collectCashDirect()
+   local hrp = character and character:FindFirstChild("HumanoidRootPart")
+   if not hrp then return end
+
+   for _, obj in ipairs(workspace:GetDescendants()) do
+      pcall(function()
+         if not obj or not obj.Parent then return end
+         local lower = string.lower(obj.Name)
+         if obj:IsA("BasePart") and (
+            string.find(lower, "cash") or
+            string.find(lower, "money") or
+            string.find(lower, "coin") or
+            string.find(lower, "drop") or
+            string.find(lower, "collect") or
+            string.find(lower, "pickup")
+         ) then
+            -- Fire touch event directly without moving player
+            firetouchinterest(hrp, obj, 0) -- touch begin
+            task.wait(0.05)
+            firetouchinterest(hrp, obj, 1) -- touch end
+         end
+
+         -- Also fire proximity prompts for cash-related prompts
+         if obj:IsA("ProximityPrompt") and (
+            string.find(string.lower(obj.Name), "cash") or
+            string.find(string.lower(obj.Name), "collect") or
+            string.find(string.lower(obj.Name), "money") or
+            string.find(string.lower(obj.ActionText or ""), "collect")
+         ) then
+            fireproximityprompt(obj)
+         end
+      end)
+   end
+end
+
+-- ══════════════════════════════════════════════════════════
+--  TABS
+-- ══════════════════════════════════════════════════════════
+local FarmTab     = Window:CreateTab("Auto Farm",  "zap")
+local PlayerTab   = Window:CreateTab("Player",     "user")
+local TeleportTab = Window:CreateTab("Teleport",   "map-pin")
+local MiscTab     = Window:CreateTab("Misc",       "settings")
+
+-- ══════════════════════════════════════════════════════════
+--  AUTO FARM TAB
+-- ══════════════════════════════════════════════════════════
+FarmTab:CreateSection("Auto Collect Cash")
+
+local function runAutoFarm()
+   while autoFarm do
+      -- Collect cash directly without teleporting
+      collectCashDirect()
+      task.wait(farmDelay)
+   end
+end
+
+FarmTab:CreateToggle({
+   Name = "Auto Farm (Collect Cash)",
+   CurrentValue = false,
+   Flag = "AutoFarm",
+   Callback = function(val)
+      autoFarm = val
+      if val then
+         farmThread = task.spawn(runAutoFarm)
+         Rayfield:Notify({ Title = "Auto Farm", Content = "Collecting cash directly!", Duration = 3 })
+      else
+         if farmThread then task.cancel(farmThread) farmThread = nil end
+         Rayfield:Notify({ Title = "Auto Farm", Content = "Stopped.", Duration = 2 })
+      end
+   end,
+})
+
+FarmTab:CreateSlider({
+   Name = "Farm Delay (seconds)",
+   Range = {0.1, 3},
+   Increment = 0.1,
+   Suffix = "s",
+   CurrentValue = 0.3,
+   Flag = "FarmDelay",
+   Callback = function(val)
+      farmDelay = val
+   end,
+})
+
+FarmTab:CreateSection("Auto Buy Upgrades")
+
+local function tryBuyUpgrades()
+   for _, obj in ipairs(workspace:GetDescendants()) do
+      pcall(function()
+         if not obj or not obj.Parent then return end
+         local lname  = string.lower(obj.Name)
+         local lparent = string.lower(obj.Parent and obj.Parent.Name or "")
+         if (obj:IsA("ProximityPrompt") or obj:IsA("ClickDetector")) and (
+            string.find(lname,  "buy") or
+            string.find(lname,  "upgrade") or
+            string.find(lparent,"upgrade")
+         ) then
+            if obj:IsA("ProximityPrompt") then
+               fireproximityprompt(obj)
+            elseif obj:IsA("ClickDetector") then
+               fireclickdetector(obj)
+            end
+         end
+      end)
+   end
+end
+
+local function runAutoBuy()
+   while autoBuy do
+      tryBuyUpgrades()
+      task.wait(1)
+   end
+end
+
+FarmTab:CreateToggle({
+   Name = "Auto Buy Upgrades",
+   CurrentValue = false,
+   Flag = "AutoBuy",
+   Callback = function(val)
+      autoBuy = val
+      if val then
+         autoBuyThread = task.spawn(runAutoBuy)
+         Rayfield:Notify({ Title = "Auto Buy", Content = "Buying upgrades automatically!", Duration = 3 })
+      else
+         if autoBuyThread then task.cancel(autoBuyThread) autoBuyThread = nil end
+         Rayfield:Notify({ Title = "Auto Buy", Content = "Stopped.", Duration = 2 })
+      end
+   end,
+})
+
+-- ══════════════════════════════════════════════════════════
+--  PLAYER TAB
+-- ══════════════════════════════════════════════════════════
+PlayerTab:CreateSection("Movement")
+
+PlayerTab:CreateSlider({
+   Name = "Walk Speed",
+   Range = {16, 300},
+   Increment = 1,
+   Suffix = "",
+   CurrentValue = 16,
+   Flag = "WalkSpeed",
+   Callback = function(val)
+      currentSpeed = val
+      if humanoid then humanoid.WalkSpeed = val end
+   end,
+})
+
+PlayerTab:CreateButton({
+   Name = "Reset Speed",
+   Callback = function()
+      currentSpeed = 16
+      if humanoid then humanoid.WalkSpeed = 16 end
+      Rayfield:Notify({ Title = "Speed", Content = "Speed reset to default.", Duration = 2 })
+   end,
+})
+
+PlayerTab:CreateSection("Jump")
+
+PlayerTab:CreateToggle({
+   Name = "Infinite Jump",
+   CurrentValue = false,
+   Flag = "InfiniteJump",
+   Callback = function(val)
+      infiniteJump = val
+      if val then
+         jumpConn = UserInputService.JumpRequest:Connect(function()
+            if character and humanoid then
+               humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+         end)
+         if humanoid then humanoid.JumpPower = 150 end
+      else
+         if jumpConn then jumpConn:Disconnect() jumpConn = nil end
+         if humanoid then humanoid.JumpPower = 50 end
+      end
+   end,
+})
+
+PlayerTab:CreateSection("Hitbox")
+
+PlayerTab:CreateToggle({
+   Name = "Extended Hitbox",
+   CurrentValue = false,
+   Flag = "ExtendHitbox",
+   Callback = function(val)
+      hitboxActive = val
+      if val then
+         hitboxConn = RunService.Heartbeat:Connect(function()
+            for _, p in ipairs(Players:GetPlayers()) do
+               if p ~= player and p.Character then
+                  local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+                  if hrp then
+                     hrp.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+                     hrp.Transparency = 0.7
+                  end
+               end
+            end
+         end)
+         Rayfield:Notify({ Title = "Hitbox", Content = "Extended hitbox ON!", Duration = 2 })
+      else
+         if hitboxConn then hitboxConn:Disconnect() hitboxConn = nil end
+         for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and p.Character then
+               local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+               if hrp then
+                  hrp.Size = Vector3.new(2, 2, 1)
+                  hrp.Transparency = 1
+               end
+            end
+         end
+         Rayfield:Notify({ Title = "Hitbox", Content = "Extended hitbox OFF.", Duration = 2 })
+      end
+   end,
+})
+
+PlayerTab:CreateSlider({
+   Name = "Hitbox Size",
+   Range = {2, 50},
+   Increment = 1,
+   Suffix = " studs",
+   CurrentValue = 5,
+   Flag = "HitboxSize",
+   Callback = function(val)
+      hitboxSize = val
+   end,
+})
+
+PlayerTab:CreateSection("God Mode")
+
+PlayerTab:CreateToggle({
+   Name = "God Mode",
+   CurrentValue = false,
+   Flag = "GodMode",
+   Callback = function(val)
+      godMode = val
+      if val then
+         godConn = RunService.Heartbeat:Connect(function()
+            if humanoid then
+               humanoid.Health = humanoid.MaxHealth
+            end
+         end)
+         Rayfield:Notify({ Title = "God Mode", Content = "You are now invincible!", Duration = 3 })
+      else
+         if godConn then godConn:Disconnect() godConn = nil end
+         Rayfield:Notify({ Title = "God Mode", Content = "God Mode disabled.", Duration = 2 })
+      end
+   end,
+})
+
+PlayerTab:CreateSection("No Cooldown")
+
+local function hookCooldownMeta()
+   if hookedMeta then return end
+   hookedMeta = true
+   local mt = getrawmetatable and getrawmetatable(game)
+   if mt then
+      local oldIndex = mt.__newindex
+      setreadonly(mt, false)
+      mt.__newindex = function(t, k, v)
+         if noCooldown and type(k) == "string" and (
+            string.find(string.lower(k), "cooldown") or
+            string.find(string.lower(k), "cdtime") or
+            string.find(string.lower(k), "dashcd") or
+            string.find(string.lower(k), "skillcd") or
+            string.find(string.lower(k), "timer")
+         ) and type(v) == "number" and v > 0 then
+            return oldIndex(t, k, 0)
+         end
+         return oldIndex(t, k, v)
+      end
+      setreadonly(mt, true)
+   end
+end
+
+local function scanAndReset(container)
+   if not container then return end
+   for _, obj in ipairs(container:GetDescendants()) do
+      pcall(function()
+         if obj:IsA("NumberValue") or obj:IsA("IntValue") or obj:IsA("StringValue") then
+            local lower = string.lower(obj.Name)
+            if string.find(lower, "cooldown") or
+               string.find(lower, "cdtime") or
+               string.find(lower, "dashcd") or
+               string.find(lower, "skillcd") or
+               string.find(lower, "timer") or
+               string.find(lower, " cd") then
+               if obj:IsA("StringValue") then
+                  obj.Value = "0"
+               else
+                  obj.Value = 0
+               end
+            end
+         end
+      end)
+   end
+end
+
+PlayerTab:CreateToggle({
+   Name = "No Dash / Skill Cooldown",
+   CurrentValue = false,
+   Flag = "NoCooldown",
+   Callback = function(val)
+      noCooldown = val
+      if val then
+         hookCooldownMeta()
+         noCooldownConn = RunService.Heartbeat:Connect(function()
+            scanAndReset(character)
+            scanAndReset(player.PlayerGui)
+            scanAndReset(player:FindFirstChild("leaderstats"))
+            scanAndReset(game:GetService("ReplicatedStorage"))
+         end)
+         Rayfield:Notify({ Title = "No Cooldown", Content = "Dash & skill cooldowns bypassed!", Duration = 3 })
+      else
+         if noCooldownConn then noCooldownConn:Disconnect() noCooldownConn = nil end
+         Rayfield:Notify({ Title = "No Cooldown", Content = "Cooldown back to normal.", Duration = 2 })
+      end
+   end,
+})
+
+-- ══════════════════════════════════════════════════════════
+--  TELEPORT TAB
+-- ══════════════════════════════════════════════════════════
+TeleportTab:CreateSection("Quick Teleport")
+
+for _, loc in ipairs(locations) do
+   TeleportTab:CreateButton({
+      Name = "→ " .. loc.name,
+      Callback = function()
+         teleport(loc.x, loc.y, loc.z)
+         Rayfield:Notify({ Title = "Teleported", Content = "Moved to " .. loc.name, Duration = 2 })
+      end,
+   })
+end
+
+-- ══════════════════════════════════════════════════════════
+--  MISC TAB
+-- ══════════════════════════════════════════════════════════
+MiscTab:CreateSection("Anti AFK")
+
+MiscTab:CreateToggle({
+   Name = "Anti AFK",
+   CurrentValue = false,
+   Flag = "AntiAFK",
+   Callback = function(val)
+      antiAFK = val
+      if val then
+         afkConn = RunService.Heartbeat:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+         end)
+         Rayfield:Notify({ Title = "Anti AFK", Content = "You won't get kicked!", Duration = 3 })
+      else
+         if afkConn then afkConn:Disconnect() afkConn = nil end
+      end
+   end,
+})
+
+MiscTab:CreateSection("Respawn Helper")
+
+local deathPos = nil
+
+local function onDied()
+   if character and character:FindFirstChild("HumanoidRootPart") then
+      deathPos = character.HumanoidRootPart.Position
+   end
+end
+
+local function onCharAdded(c)
+   character = c
+   local hum = c:WaitForChild("Humanoid")
+   hum.Died:Connect(onDied)
+   if deathPos and Rayfield.Flags.RespawnDeath then
+      local hrp = c:WaitForChild("HumanoidRootPart")
+      task.wait(0.3)
+      hrp.CFrame = CFrame.new(deathPos + Vector3.new(0, 5, 0))
+   end
+end
+
+player.CharacterAdded:Connect(onCharAdded)
+if player.Character then onCharAdded(player.Character) end
+
+MiscTab:CreateToggle({
+   Name = "Respawn at Death Position",
+   CurrentValue = true,
+   Flag = "RespawnDeath",
+   Callback = function(val)
+      if not val then deathPos = nil end
+   end,
+})
+
+MiscTab:CreateSection("ESP")
+
+local function clearESP()
+   for _, h in pairs(espHighlights) do
+      if h then h:Destroy() end
+   end
+   espHighlights = {}
+end
+
+local function applyESP()
+   clearESP()
+   for _, p in ipairs(Players:GetPlayers()) do
+      if p ~= player and p.Character then
+         local highlight = Instance.new("Highlight")
+         highlight.FillColor        = Color3.fromRGB(255, 50, 50)
+         highlight.OutlineColor     = Color3.fromRGB(255, 255, 255)
+         highlight.FillTransparency = 0.5
+         highlight.Parent           = p.Character
+         espHighlights[p.Name]      = highlight
+      end
+   end
+end
+
+MiscTab:CreateToggle({
+   Name = "Player ESP",
+   CurrentValue = false,
+   Flag = "PlayerESP",
+   Callback = function(val)
+      espActive = val
+      if val then
+         applyESP()
+         Rayfield:Notify({ Title = "ESP", Content = "Player ESP enabled!", Duration = 2 })
+      else
+         clearESP()
+      end
+   end,
+})
+
+Players.PlayerAdded:Connect(function(p)
+   if espActive then
+      p.CharacterAdded:Connect(function()
+         task.wait(1)
+         applyESP()
+      end)
+   end
+end)
+
+MiscTab:CreateSection("Danger Zone")
+
+MiscTab:CreateButton({
+   Name = "Destroy UI",
+   Callback = function()
+      autoFarm    = false
+      autoBuy     = false
+      hitboxActive= false
+      godMode     = false
+      antiAFK     = false
+      espActive   = false
+      noCooldown  = false
+      clearESP()
+      if farmThread     then task.cancel(farmThread)     end
+      if autoBuyThread  then task.cancel(autoBuyThread)  end
+      if jumpConn       then jumpConn:Disconnect()       end
+      if hitboxConn     then hitboxConn:Disconnect()     end
+      if godConn        then godConn:Disconnect()        end
+      if afkConn        then afkConn:Disconnect()        end
+      if noCooldownConn then noCooldownConn:Disconnect() end
+      Rayfield:Destroy()
+   end,
+})
+
+-- ── Init ──────────────────────────────────────────────────────────────────────
+Rayfield:Notify({
+   Title = "UPT Script Loaded!",
+   Content = "All features ready. Enjoy!",
+   Duration = 5,
+})
