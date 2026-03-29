@@ -1,0 +1,245 @@
+-- Load Rayfield
+task.wait(2) -- 2-second delay before execution
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "Universal Utilities (Beta)",
+   LoadingTitle = "Universal Utilities",
+   LoadingSubtitle = "Beta Edition",
+   Theme = "Midnight",
+   DisableRayfieldPrompts = false,
+   DisableBuildWarnings = false,
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = "UniversalUtilities",
+      FileName = "Config",
+   },
+})
+
+-- ── Services ──────────────────────────────────────────────────────────────────
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player    = Players.LocalPlayer
+local mouse     = player:GetMouse()
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local rootPart  = character:WaitForChild("HumanoidRootPart")
+
+-- State
+local currentSpeed   = 16
+local noclipActive   = false
+local tapTeleport    = false
+local infiniteJump   = false
+local noclipConn     = nil
+local jumpConn       = nil
+local tapConn        = nil
+
+-- Re-apply on respawn
+player.CharacterAdded:Connect(function(c)
+   character = c
+   humanoid  = c:WaitForChild("Humanoid")
+   rootPart  = c:WaitForChild("HumanoidRootPart")
+   task.wait(0.5)
+   humanoid.WalkSpeed = currentSpeed
+   if Rayfield.Flags.InfiniteJump then
+      humanoid.JumpPower = 150
+   end
+end)
+
+-- ══════════════════════════════════════════════════════════
+--  TABS
+-- ══════════════════════════════════════════════════════════
+local MovementTab = Window:CreateTab("Movement", "footprints")
+local TeleportTab = Window:CreateTab("Teleport", "map-pin")
+
+-- ══════════════════════════════════════════════════════════
+--  MOVEMENT TAB
+-- ══════════════════════════════════════════════════════════
+
+-- ── Walk Speed ────────────────────────────────────────────
+MovementTab:CreateSection("Walk Speed")
+
+MovementTab:CreateSlider({
+   Name = "Speed",
+   Range = {16, 500},
+   Increment = 1,
+   Suffix = "",
+   CurrentValue = 16,
+   Flag = "WalkSpeed",
+   Callback = function(val)
+      currentSpeed = val
+      if humanoid then humanoid.WalkSpeed = val end
+   end,
+})
+
+MovementTab:CreateButton({
+   Name = "Reset Speed",
+   Callback = function()
+      currentSpeed = 16
+      if humanoid then humanoid.WalkSpeed = 16 end
+      Rayfield:Notify({ Title = "Speed", Content = "Speed reset to default (16).", Duration = 2 })
+   end,
+})
+
+-- ── Infinite Jump ─────────────────────────────────────────
+MovementTab:CreateSection("Jump")
+
+MovementTab:CreateToggle({
+   Name = "Unlimited Jump",
+   CurrentValue = false,
+   Flag = "InfiniteJump",
+   Callback = function(val)
+      infiniteJump = val
+      if val then
+         jumpConn = UserInputService.JumpRequest:Connect(function()
+            if character and humanoid then
+               humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+         end)
+         if humanoid then humanoid.JumpPower = 150 end
+         Rayfield:Notify({ Title = "Unlimited Jump", Content = "Jump as many times as you want!", Duration = 3 })
+      else
+         if jumpConn then jumpConn:Disconnect() jumpConn = nil end
+         if humanoid then humanoid.JumpPower = 50 end
+         Rayfield:Notify({ Title = "Unlimited Jump", Content = "Disabled.", Duration = 2 })
+      end
+   end,
+})
+
+MovementTab:CreateSlider({
+   Name = "Jump Power",
+   Range = {50, 500},
+   Increment = 5,
+   Suffix = "",
+   CurrentValue = 150,
+   Flag = "JumpPower",
+   Callback = function(val)
+      if humanoid then humanoid.JumpPower = val end
+   end,
+})
+
+-- ── Noclip ────────────────────────────────────────────────
+MovementTab:CreateSection("Noclip")
+
+MovementTab:CreateToggle({
+   Name = "Noclip",
+   CurrentValue = false,
+   Flag = "Noclip",
+   Callback = function(val)
+      noclipActive = val
+      if val then
+         noclipConn = RunService.Stepped:Connect(function()
+            if character then
+               for _, part in ipairs(character:GetDescendants()) do
+                  if part:IsA("BasePart") and part.CanCollide then
+                     part.CanCollide = false
+                  end
+               end
+            end
+         end)
+         Rayfield:Notify({ Title = "Noclip", Content = "Walk through walls!", Duration = 3 })
+      else
+         if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+         if character then
+            for _, part in ipairs(character:GetDescendants()) do
+               if part:IsA("BasePart") then
+                  part.CanCollide = true
+               end
+            end
+         end
+         Rayfield:Notify({ Title = "Noclip", Content = "Collision restored.", Duration = 2 })
+      end
+   end,
+})
+
+-- ══════════════════════════════════════════════════════════
+--  TELEPORT TAB
+-- ══════════════════════════════════════════════════════════
+
+-- ── Tap Teleport ──────────────────────────────────────────
+TeleportTab:CreateSection("Tap / Click Teleport")
+
+TeleportTab:CreateToggle({
+   Name = "Tap Teleport",
+   CurrentValue = false,
+   Flag = "TapTeleport",
+   Callback = function(val)
+      tapTeleport = val
+      if val then
+         tapConn = mouse.Button1Down:Connect(function()
+            local target = mouse.Hit
+            if target and rootPart then
+               rootPart.CFrame = CFrame.new(
+                  target.Position + Vector3.new(0, 3, 0)
+               )
+            end
+         end)
+         Rayfield:Notify({ Title = "Tap Teleport", Content = "Click anywhere to teleport!", Duration = 3 })
+      else
+         if tapConn then tapConn:Disconnect() tapConn = nil end
+         Rayfield:Notify({ Title = "Tap Teleport", Content = "Tap teleport disabled.", Duration = 2 })
+      end
+   end,
+})
+
+-- ── Saved Positions ───────────────────────────────────────
+TeleportTab:CreateSection("Saved Positions")
+
+local savedPosition = nil
+
+TeleportTab:CreateButton({
+   Name = "Save Current Position",
+   Callback = function()
+      if rootPart then
+         savedPosition = rootPart.Position
+         Rayfield:Notify({
+            Title = "Position Saved",
+            Content = string.format("X: %.1f  Y: %.1f  Z: %.1f", savedPosition.X, savedPosition.Y, savedPosition.Z),
+            Duration = 3,
+         })
+      end
+   end,
+})
+
+TeleportTab:CreateButton({
+   Name = "Teleport to Saved Position",
+   Callback = function()
+      if savedPosition and rootPart then
+         rootPart.CFrame = CFrame.new(savedPosition + Vector3.new(0, 3, 0))
+         Rayfield:Notify({ Title = "Teleported", Content = "Returned to saved position!", Duration = 2 })
+      else
+         Rayfield:Notify({ Title = "No Position", Content = "Save a position first!", Duration = 2 })
+      end
+   end,
+})
+
+-- ── Danger Zone ───────────────────────────────────────────
+TeleportTab:CreateSection("Danger Zone")
+
+TeleportTab:CreateButton({
+   Name = "Destroy UI",
+   Callback = function()
+      noclipActive = false
+      tapTeleport  = false
+      infiniteJump = false
+      if noclipConn then noclipConn:Disconnect() end
+      if jumpConn   then jumpConn:Disconnect()   end
+      if tapConn    then tapConn:Disconnect()    end
+      if character then
+         for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+         end
+      end
+      Rayfield:Destroy()
+   end,
+})
+
+-- ── Init ──────────────────────────────────────────────────────────────────────
+Rayfield:Notify({
+   Title = "Universal Utilities (Beta) Loaded!",
+   Content = "All features ready. Enjoy!",
+   Duration = 4,
+})
